@@ -1,6 +1,6 @@
 {
   "name": "cftun",
-  "version": "0.1.0",
+  "version": "0.0.0",
   "description": "A tiny Rust CLI that turns Cloudflare Tunnel into a free, persistent ngrok alternative for webhooks.",
   "main": "bin.js",
   "bin": {
