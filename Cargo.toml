@@ -2,6 +2,14 @@
 name = "cftun"
 version = "0.1.0"
 edition = "2024"
+description = "A tiny Rust CLI that turns Cloudflare Tunnel into a free, persistent ngrok alternative for webhooks."
+license = "MIT"
+repository = "https://github.com/blankeos/cftun"
+homepage = "https://github.com/blankeos/cftun"
+readme = "README.md"
+keywords = ["cloudflare", "cloudflared", "tunnel", "webhooks", "cli"]
+categories = ["command-line-utilities", "development-tools"]
+authors = ["Carlo Taleon"]
 
 [dependencies]
 anyhow = "1"
@@ -14,3 +22,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
 which = "6"
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"

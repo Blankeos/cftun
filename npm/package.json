@@ -1,0 +1,39 @@
+{
+  "name": "cftun",
+  "version": "0.1.0",
+  "description": "A tiny Rust CLI that turns Cloudflare Tunnel into a free, persistent ngrok alternative for webhooks.",
+  "main": "bin.js",
+  "bin": {
+    "cftun": "./bin.js"
+  },
+  "scripts": {
+    "postinstall": "node install.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Blankeos/cftun.git"
+  },
+  "keywords": [
+    "cloudflare",
+    "cloudflared",
+    "tunnel",
+    "webhooks",
+    "cli",
+    "rust"
+  ],
+  "author": "Carlo Taleon",
+  "license": "MIT",
+  "files": [
+    "install.js",
+    "bin.js",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=12"
+  },
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ]
+}
