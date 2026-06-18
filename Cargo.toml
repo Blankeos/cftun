@@ -6,6 +6,8 @@ edition = "2024"
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
+ctrlc = "3"
+cliclack = "0.5"
 colored = "2"
 dirs = "5"
 serde = { version = "1", features = ["derive"] }
