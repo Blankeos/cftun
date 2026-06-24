@@ -37,8 +37,8 @@ enum Commands {
     Status,
     /// Run a tunnel by name
     Run {
-        /// Name of the tunnel to run
-        name: String,
+        /// Name of the tunnel to run. Omit to pick from a filterable list.
+        name: Option<String>,
     },
     /// Show the config for a tunnel
     Show {
@@ -150,7 +150,7 @@ fn main() -> Result<()> {
             update(name.as_deref(), hostname.as_deref(), local.as_deref())
         }
         Commands::Status => status(),
-        Commands::Run { name } => run(&name),
+        Commands::Run { name } => run(name.as_deref()),
         Commands::Delete { name, cleanup } => delete(name.as_deref(), cleanup),
     }
 }
@@ -327,7 +327,7 @@ fn tunnel_select_prompt(message: &str, meta: &Metadata) -> Result<String> {
     if meta.tunnels.is_empty() {
         anyhow::bail!("no tunnels managed by cftun. create one with `cftun create`");
     }
-    let mut sel = select(message);
+    let mut sel = select(message).filter_mode().max_rows(10);
     for (n, t) in &meta.tunnels {
         sel = sel.item(
             n.clone(),
@@ -901,9 +901,13 @@ fn import(name: &str, hostname: &str, local: &str) -> Result<()> {
     Ok(())
 }
 
-fn run(name: &str) -> Result<()> {
+fn run(name: Option<&str>) -> Result<()> {
     let meta = load_metadata()?;
-    let t = meta.tunnels.get(name).ok_or_else(|| {
+    let name = match name {
+        Some(name) => name.to_string(),
+        None => tunnel_select_prompt("Select a tunnel to run", &meta)?,
+    };
+    let t = meta.tunnels.get(&name).ok_or_else(|| {
         anyhow!(
             "tunnel '{}' not found. run `cftun list` to see available tunnels (or import it with `cftun import <name> <hostname> <port/url>`)",
             name
