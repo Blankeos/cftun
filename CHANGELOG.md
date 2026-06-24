@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.0.2] - 2026-06-24
+
+### Features
+
+- Make show/import commands interactive with optional args by @Blankeos
+- Allow `run` to choose tunnel interactively when omitted by @Blankeos
+
 ## [0.0.1] - 2026-06-18
 
 ### Chores
