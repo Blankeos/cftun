@@ -42,17 +42,17 @@ enum Commands {
     },
     /// Show the config for a tunnel
     Show {
-        /// Name of the tunnel to show
-        name: String,
+        /// Name of the tunnel to show. Omit to pick from a filterable list.
+        name: Option<String>,
     },
     /// Import an existing cloudflared tunnel into cftun
     Import {
-        /// Name of the existing tunnel (as shown in `cftun list`)
-        name: String,
+        /// Name of the existing tunnel (as shown in `cftun list`). Omit to pick from unmanaged tunnels.
+        name: Option<String>,
         /// Public hostname to route (e.g. webhook.example.com)
-        hostname: String,
+        hostname: Option<String>,
         /// Local service to forward to (e.g. 3000, http://localhost:3000)
-        local: String,
+        local: Option<String>,
     },
     /// Update a tunnel's hostname or local service
     Update {
@@ -144,8 +144,10 @@ fn main() -> Result<()> {
             create(name.as_deref(), hostname.as_deref(), local.as_deref())
         }
         Commands::List => list(),
-        Commands::Show { name } => show(&name),
-        Commands::Import { name, hostname, local } => import(&name, &hostname, &local),
+        Commands::Show { name } => show(name.as_deref()),
+        Commands::Import { name, hostname, local } => {
+            import(name.as_deref(), hostname.as_deref(), local.as_deref())
+        }
         Commands::Update { name, hostname, local } => {
             update(name.as_deref(), hostname.as_deref(), local.as_deref())
         }
@@ -332,6 +334,33 @@ fn tunnel_select_prompt(message: &str, meta: &Metadata) -> Result<String> {
         sel = sel.item(
             n.clone(),
             format!("{}  https://{}  {}", n.bold(), t.hostname, t.service.dimmed()),
+            "",
+        );
+    }
+    Ok(sel.interact()?)
+}
+
+fn unmanaged_tunnel_select_prompt(
+    message: &str,
+    cf_tunnels: &[CloudflaredTunnel],
+    meta: &Metadata,
+) -> Result<String> {
+    let managed: HashSet<&String> = meta.tunnels.keys().collect();
+    let unmanaged: Vec<&CloudflaredTunnel> = cf_tunnels
+        .iter()
+        .filter(|t| !managed.contains(&t.name))
+        .collect();
+
+    if unmanaged.is_empty() {
+        anyhow::bail!("no unmanaged cloudflared tunnels found. create one with `cloudflared tunnel create <name>` or `cftun create`");
+    }
+
+    let mut sel = select(message).filter_mode().max_rows(10);
+    for t in unmanaged {
+        let status = if t.connections.is_empty() { "offline" } else { "online" };
+        sel = sel.item(
+            t.name.clone(),
+            format!("{}  {}  {}", t.name.bold(), t.id.dimmed(), status.dimmed()),
             "",
         );
     }
@@ -847,9 +876,13 @@ fn status() -> Result<()> {
     Ok(())
 }
 
-fn show(name: &str) -> Result<()> {
+fn show(name: Option<&str>) -> Result<()> {
     let meta = load_metadata()?;
-    let t = meta.tunnels.get(name).ok_or_else(|| {
+    let name = match name {
+        Some(name) => name.to_string(),
+        None => tunnel_select_prompt("Select a tunnel to show", &meta)?,
+    };
+    let t = meta.tunnels.get(&name).ok_or_else(|| {
         anyhow!(
             "tunnel '{}' not found. run `cftun list` to see available tunnels (or import it with `cftun import <name> <hostname> <port/url>`)",
             name
@@ -867,13 +900,24 @@ fn show(name: &str) -> Result<()> {
     Ok(())
 }
 
-fn import(name: &str, hostname: &str, local: &str) -> Result<()> {
+fn import(name: Option<&str>, hostname: Option<&str>, local: Option<&str>) -> Result<()> {
+    let interactive = name.is_none() || hostname.is_none() || local.is_none();
     let mut meta = load_metadata()?;
-    if meta.tunnels.contains_key(name) {
-        anyhow::bail!("tunnel '{}' is already managed by cftun", name);
+
+    if interactive {
+        intro("Import a tunnel")?;
     }
 
     let cf = fetch_cloudflared_tunnels().context("fetching cloudflared tunnels")?;
+    let name = match name {
+        Some(name) => name.to_string(),
+        None => unmanaged_tunnel_select_prompt("Select a tunnel to import", &cf, &meta)?,
+    };
+
+    if meta.tunnels.contains_key(&name) {
+        anyhow::bail!("tunnel '{}' is already managed by cftun", name);
+    }
+
     let existing = cf
         .into_iter()
         .find(|t| t.name == name)
@@ -884,12 +928,43 @@ fn import(name: &str, hostname: &str, local: &str) -> Result<()> {
             )
         })?;
 
+    let hostname = match hostname {
+        Some(hostname) => hostname.to_string(),
+        None => input("Public hostname")
+            .placeholder("e.g. webhook.example.com")
+            .validate(|s: &String| {
+                let s = s.trim();
+                if s.is_empty() {
+                    Err("Hostname is required".to_string())
+                } else if !s.contains('.') {
+                    Err("Must be a valid domain name".to_string())
+                } else {
+                    Ok(())
+                }
+            })
+            .interact()?,
+    };
+
+    let local = match local {
+        Some(local) => local.to_string(),
+        None => input("Local service")
+            .placeholder("e.g. 3000 or http://localhost:3000")
+            .autocomplete(vec![
+                "3000".to_string(),
+                "8080".to_string(),
+                "8443".to_string(),
+                "http://localhost:3000".to_string(),
+                "http://localhost:8080".to_string(),
+            ])
+            .interact()?,
+    };
+
     // Re-route DNS to the new hostname
     println!("{} Routing DNS {} → {}...", "→".cyan(), hostname, name);
-    let _ = run_cloudflared(&["tunnel", "route", "dns", "delete", hostname]);
-    cloudflared_ok(&["tunnel", "route", "dns", name, hostname])?;
+    let _ = run_cloudflared(&["tunnel", "route", "dns", "delete", &hostname]);
+    cloudflared_ok(&["tunnel", "route", "dns", &name, &hostname])?;
 
-    let tm = write_tunnel_config(&mut meta, name, &existing.id, hostname, local)?;
+    let tm = write_tunnel_config(&mut meta, &name, &existing.id, &hostname, &local)?;
 
     println!("{} Tunnel '{}' imported.", "✓".green(), name);
     println!(
