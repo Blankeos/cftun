@@ -69,7 +69,7 @@ enum Commands {
     Delete {
         /// Name of the tunnel to delete
         name: Option<String>,
-        /// Also delete the local config file and DNS route
+        /// Also delete the Cloudflare tunnel and local config file
         #[arg(long)]
         cleanup: bool,
     },
@@ -240,6 +240,20 @@ fn cloudflared_ok(args: &[&str]) -> Result<String> {
         );
     }
     Ok(stdout.into_owned())
+}
+
+fn route_dns(uuid: &str, hostname: &str) -> Result<()> {
+    cloudflared_ok(&["tunnel", "route", "dns", "--overwrite-dns", uuid, hostname])
+        .with_context(|| format!("routing DNS {hostname} to tunnel {uuid}"))?;
+    Ok(())
+}
+
+fn warn_dns_cleanup_unsupported(hostname: &str) {
+    eprintln!(
+        "{} cloudflared cannot delete DNS hostname routes from this CLI. Delete '{}' in Cloudflare DNS if you want the record gone.",
+        "!".yellow(),
+        hostname
+    );
 }
 
 fn parse_uuid(output: &str) -> Option<String> {
@@ -481,9 +495,9 @@ fn create(name: Option<&str>, hostname: Option<&str>, local: Option<&str>) -> Re
         sp.stop(format!("Created: {}", uuid));
 
         let sp = spinner();
-        sp.start(format!("Routing DNS {} → {}...", hostname, name));
-        cloudflared_ok(&["tunnel", "route", "dns", &name, &hostname])?;
-        sp.stop("DNS route created");
+        sp.start(format!("Routing DNS {} → {}...", hostname, uuid));
+        route_dns(&uuid, &hostname)?;
+        sp.stop("DNS route ensured");
 
         let tm = write_tunnel_config(&mut meta, &name, &uuid, &hostname, &local)?;
 
@@ -501,8 +515,8 @@ fn create(name: Option<&str>, hostname: Option<&str>, local: Option<&str>) -> Re
             .ok_or_else(|| anyhow!("could not parse tunnel UUID from cloudflared output"))?;
         println!("  Created tunnel UUID: {}", uuid.dimmed());
 
-        println!("{} Routing {} → {}...", "→".cyan(), hostname, name);
-        cloudflared_ok(&["tunnel", "route", "dns", &name, &hostname])?;
+        println!("{} Routing {} → {}...", "→".cyan(), hostname, uuid);
+        route_dns(&uuid, &hostname)?;
 
         let tm = write_tunnel_config(&mut meta, &name, &uuid, &hostname, &local)?;
 
@@ -554,14 +568,15 @@ fn update(name: Option<&str>, hostname: Option<&str>, local: Option<&str>) -> Re
         Some(h) => Some(h.to_string()),
         None => {
             if interactive {
-                let h: String = input("New hostname")
-                    .placeholder("e.g. webhook.example.com")
+                let h: String = input("New hostname (Enter keeps current)")
                     .default_input(&old_hostname)
+                    .required(false)
                     .interact()?;
-                if h == old_hostname {
+                let h = h.trim();
+                if h.is_empty() || h == old_hostname {
                     None
                 } else {
-                    Some(h)
+                    Some(h.to_string())
                 }
             } else {
                 None
@@ -574,9 +589,9 @@ fn update(name: Option<&str>, hostname: Option<&str>, local: Option<&str>) -> Re
         Some(l) => Some(l.to_string()),
         None => {
             if interactive {
-                let l: String = input("New local service")
-                    .placeholder("e.g. 3000 or http://localhost:3000")
+                let l: String = input("New local service (Enter keeps current)")
                     .default_input(&old_service)
+                    .required(false)
                     .autocomplete(vec![
                         "3000".to_string(),
                         "8080".to_string(),
@@ -585,10 +600,11 @@ fn update(name: Option<&str>, hostname: Option<&str>, local: Option<&str>) -> Re
                         "http://localhost:8080".to_string(),
                     ])
                     .interact()?;
-                if l == old_service {
+                let l = l.trim();
+                if l.is_empty() || l == old_service {
                     None
                 } else {
-                    Some(l)
+                    Some(l.to_string())
                 }
             } else {
                 None
@@ -627,10 +643,10 @@ fn update(name: Option<&str>, hostname: Option<&str>, local: Option<&str>) -> Re
     if interactive {
         if hostname_changed {
             let sp = spinner();
-            sp.start(format!("Updating DNS route: {} → {}...", old_hostname, new_hostname));
-            let _ = run_cloudflared(&["tunnel", "route", "dns", "delete", &old_hostname]);
-            cloudflared_ok(&["tunnel", "route", "dns", &name, &new_hostname])?;
+            sp.start(format!("Updating DNS route: {} → {}...", new_hostname, uuid));
+            route_dns(&uuid, &new_hostname)?;
             sp.stop("DNS route updated");
+            warn_dns_cleanup_unsupported(&old_hostname);
         }
 
         let sp = spinner();
@@ -652,11 +668,11 @@ fn update(name: Option<&str>, hostname: Option<&str>, local: Option<&str>) -> Re
             println!(
                 "{} Updating DNS route: {} → {}...",
                 "→".cyan(),
-                old_hostname,
-                new_hostname
+                new_hostname,
+                uuid
             );
-            let _ = run_cloudflared(&["tunnel", "route", "dns", "delete", &old_hostname]);
-            cloudflared_ok(&["tunnel", "route", "dns", &name, &new_hostname])?;
+            route_dns(&uuid, &new_hostname)?;
+            warn_dns_cleanup_unsupported(&old_hostname);
         }
 
         rewrite_config(&config_path, &uuid, &new_hostname, &new_service)?;
@@ -715,7 +731,7 @@ fn delete(name: Option<&str>, cleanup_arg: bool) -> Result<()> {
             .item(
                 "full",
                 "Full cleanup",
-                "delete tunnel, DNS route, and config file",
+                "delete tunnel and config file; DNS may need manual cleanup",
             )
             .interact()?;
 
@@ -740,9 +756,7 @@ fn delete(name: Option<&str>, cleanup_arg: bool) -> Result<()> {
             let _ = run_cloudflared(&["tunnel", "delete", &uuid]);
             sp.stop("Deleted");
 
-            sp.start(format!("Removing DNS route {}...", hostname));
-            let _ = run_cloudflared(&["tunnel", "route", "dns", "delete", &hostname]);
-            sp.stop("Removed");
+            warn_dns_cleanup_unsupported(&hostname);
 
             if config_path.exists() {
                 sp.start("Removing config file...");
@@ -752,7 +766,7 @@ fn delete(name: Option<&str>, cleanup_arg: bool) -> Result<()> {
             }
 
             save_metadata(&meta)?;
-            outro(format!("Tunnel '{}' fully deleted.", name))?;
+            outro(format!("Tunnel '{}' deleted; check DNS for stale hostname routes.", name))?;
         } else {
             save_metadata(&meta)?;
             outro(format!(
@@ -765,8 +779,7 @@ fn delete(name: Option<&str>, cleanup_arg: bool) -> Result<()> {
             println!("{} Deleting cloudflared tunnel '{}'...", "→".cyan(), name);
             let _ = run_cloudflared(&["tunnel", "delete", &uuid]); // ignore failures if already gone
 
-            println!("{} Removing DNS route {}...", "→".cyan(), hostname);
-            let _ = run_cloudflared(&["tunnel", "route", "dns", "delete", &hostname]);
+            warn_dns_cleanup_unsupported(&hostname);
 
             if config_path.exists() {
                 fs::remove_file(&config_path)
@@ -959,10 +972,9 @@ fn import(name: Option<&str>, hostname: Option<&str>, local: Option<&str>) -> Re
             .interact()?,
     };
 
-    // Re-route DNS to the new hostname
-    println!("{} Routing DNS {} → {}...", "→".cyan(), hostname, name);
-    let _ = run_cloudflared(&["tunnel", "route", "dns", "delete", &hostname]);
-    cloudflared_ok(&["tunnel", "route", "dns", &name, &hostname])?;
+    // Re-route DNS to the new hostname, repairing stale records if needed.
+    println!("{} Routing DNS {} → {}...", "→".cyan(), hostname, existing.id);
+    route_dns(&existing.id, &hostname)?;
 
     let tm = write_tunnel_config(&mut meta, &name, &existing.id, &hostname, &local)?;
 
@@ -996,6 +1008,18 @@ fn run(name: Option<&str>) -> Result<()> {
         format!("https://{}", t.hostname).green(),
         t.service.dimmed()
     );
+
+    if let Err(err) = route_dns(&t.uuid, &t.hostname) {
+        eprintln!(
+            "{} Could not ensure DNS route before starting: {:#}",
+            "!".yellow(),
+            err
+        );
+        eprintln!(
+            "  If Cloudflare shows 1033, run: cloudflared tunnel route dns --overwrite-dns {} {}",
+            t.uuid, t.hostname
+        );
+    }
 
     // Run cloudflared interactively, letting it keep stdout/stderr connected to the terminal.
     let mut child = Command::new("cloudflared")
