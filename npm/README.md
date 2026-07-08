@@ -21,12 +21,6 @@ cargo install cftun             # or cargo (build from source)
 curl -sSL https://raw.githubusercontent.com/Blankeos/cftun/main/install.sh | sh # or linux/macos (via curl)
 ```
 
-From this repo during development:
-
-```bash
-cargo install --path .
-```
-
 Requires `cloudflared` installed and logged in:
 
 ```bash
