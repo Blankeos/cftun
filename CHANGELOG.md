@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.0.3] - 2026-07-08
+
+### Bug Fixes
+
+- Route tunnel DNS via UUID and handle unsupported cleanup by @Blankeos
+
 ## [0.0.2] - 2026-06-24
 
 ### Features
